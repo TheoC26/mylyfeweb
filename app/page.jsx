@@ -16,7 +16,7 @@ export default function Home() {
 
   const handleProcessClick = async () => {
     if (files.length === 0) {
-      alert('Please select video files to upload.');
+      alert("Please select video files to upload.");
       return;
     }
 
@@ -24,15 +24,52 @@ export default function Home() {
     setProgress([]);
     setFinalVideoUrl(null);
 
-    const formData = new FormData();
-    files.forEach(file => {
-      formData.append('videos', file);
-    });
-    formData.append('prompt', prompt);
+    const blobUrls = [];
 
-    const response = await fetch('/api/process', {
-      method: 'POST',
-      body: formData,
+    for (const file of files) {
+      try {
+        console.log("Uploading file:", file.name);
+
+        // Use the PUT endpoint with filename as query parameter
+        const response = await fetch(
+          `/api/upload?filename=${encodeURIComponent(file.name)}`,
+          {
+            method: "POST",
+            body: file,
+          }
+        );
+
+        if (!response.ok) {
+          const errorData = await response.json();
+          throw new Error(
+            errorData.error || `Upload failed: ${response.statusText}`
+          );
+        }
+
+        const blob = await response.json();
+        console.log("Upload successful:", blob);
+        blobUrls.push(blob.url);
+      } catch (error) {
+        console.error("Upload error for", file.name, ":", error);
+        setProgress((prev) => [
+          ...prev,
+          {
+            status: "error",
+            message: `Upload failed for ${file.name}: ${error.message}`,
+          },
+        ]);
+        setIsProcessing(false);
+        return;
+      }
+    }
+
+    // Continue with your processing logic...
+    const response = await fetch("/api/process", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ videoUrls: blobUrls, prompt }),
     });
 
     if (!response.body) return;
@@ -46,24 +83,26 @@ export default function Home() {
         setIsProcessing(false);
         break;
       }
-      
+
       const chunk = decoder.decode(value);
-      const lines = chunk.split('\n\n').filter(line => line.startsWith('data: '));
+      const lines = chunk
+        .split("\n\n")
+        .filter((line) => line.startsWith("data: "));
 
       for (const line of lines) {
-        const jsonString = line.replace('data: ', '');
+        const jsonString = line.replace("data: ", "");
         try {
           const data = JSON.parse(jsonString);
-          setProgress(prev => [...prev, data]);
-          if (data.status === 'done') {
+          setProgress((prev) => [...prev, data]);
+          if (data.status === "done") {
             setFinalVideoUrl(data.videoUrl);
             setIsProcessing(false);
           }
-          if (data.status === 'error') {
+          if (data.status === "error") {
             setIsProcessing(false);
           }
         } catch (e) {
-          console.error('Failed to parse progress update:', jsonString);
+          console.error("Failed to parse progress update:", jsonString);
         }
       }
     }

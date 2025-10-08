@@ -1,0 +1,3 @@
+file '/Users/theodore/Projects/MyLyfe/mvpweb/work/cuts/seg_002.mp4'
+file '/Users/theodore/Projects/MyLyfe/mvpweb/work/cuts/seg_003.mp4'
+file '/Users/theodore/Projects/MyLyfe/mvpweb/work/cuts/seg_004.mp4'
