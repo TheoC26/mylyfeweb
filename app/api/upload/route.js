@@ -1,25 +1,34 @@
-import { put } from "@vercel/blob";
+import { handleUpload } from "@vercel/blob/client";
 import { NextResponse } from "next/server";
 
 export async function POST(request) {
   try {
-    const { searchParams } = new URL(request.url);
-    const filename = searchParams.get("filename");
+    const body = await request.json();
 
-    if (!filename) {
-      return NextResponse.json(
-        { error: "Filename is required" },
-        { status: 400 }
-      );
-    }
-
-    const blob = await put(filename, request.body, {
-      access: "public",
-      addRandomSuffix: true,
-      allowedContentTypes: ["video/mp4", "video/quicktime", "video/x-msvideo", "video/x-flv", "video/x-matroska", "video/mov"],
+    const jsonResponse = await handleUpload({
+      body,
+      request,
+      onBeforeGenerateToken: async (pathname) => {
+        return {
+          allowedContentTypes: [
+            "video/mp4",
+            "video/quicktime",
+            "video/x-msvideo",
+            "video/x-flv",
+            "video/x-matroska",
+            "video/avi",
+            "video/mov",
+          ],
+          addRandomSuffix: true,
+          multipart: true, // Enable multipart uploads for large files (up to 5TB!)
+        };
+      },
+      onUploadCompleted: async ({ blob, tokenPayload }) => {
+        console.log("Upload completed:", blob.url);
+      },
     });
 
-    return NextResponse.json(blob);
+    return NextResponse.json(jsonResponse);
   } catch (error) {
     console.error("Upload error:", error);
     return NextResponse.json(

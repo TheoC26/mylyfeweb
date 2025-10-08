@@ -1,5 +1,5 @@
 'use client';
-
+import { upload } from "@vercel/blob/client";
 import { useState, useRef } from 'react';
 
 export default function Home() {
@@ -28,25 +28,20 @@ export default function Home() {
 
     for (const file of files) {
       try {
-        console.log("Uploading file:", file.name);
+        console.log("Uploading file:", {
+          name: file.name,
+          size: file.size,
+          type: file.type,
+          sizeInMB: (file.size / (1024 * 1024)).toFixed(2),
+        });
 
-        // Use the PUT endpoint with filename as query parameter
-        const response = await fetch(
-          `/api/upload?filename=${encodeURIComponent(file.name)}`,
-          {
-            method: "POST",
-            body: file,
-          }
-        );
+        // Use client upload with multipart support
+        const blob = await upload(file.name, file, {
+          access: "public",
+          handleUploadUrl: "/api/upload",
+          multipart: true, // Enable multipart for large files
+        });
 
-        if (!response.ok) {
-          const errorData = await response.json();
-          throw new Error(
-            errorData.error || `Upload failed: ${response.statusText}`
-          );
-        }
-
-        const blob = await response.json();
         console.log("Upload successful:", blob);
         blobUrls.push(blob.url);
       } catch (error) {
