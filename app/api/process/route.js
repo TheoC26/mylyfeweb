@@ -73,10 +73,11 @@ export async function POST(request) {
         return;
       }
 
-      const workdir = path.resolve(process.cwd(), "work");
-      const uploadsDir = path.resolve(process.cwd(), "uploads");
-      ensureDir(workdir);
-      ensureDir(uploadsDir);
+      // Use /tmp directory for Vercel serverless functions
+      const workdir = path.resolve("/tmp", "work");
+      const uploadsDir = path.resolve("/tmp", "uploads");
+      await ensureDir(workdir);
+      await ensureDir(uploadsDir);
 
       writer.write({
         status: "processing",
@@ -155,7 +156,7 @@ export async function POST(request) {
 
       const validAnalyses = analyses.filter((a) => a.segments.length > 0);
       const metadataPath = path.join(workdir, "metadata.json");
-      writeJSON(metadataPath, {
+      await writeJSON(metadataPath, {
         userPrompt,
         targetDurationSec,
         videos: validAnalyses,
@@ -191,6 +192,7 @@ export async function POST(request) {
       }
 
       const cutsDir = path.join(workdir, "cuts");
+      await ensureDir(cutsDir);
       const cutFiles = [];
       let i = 0;
       for (const seg of selection.chosen) {
@@ -210,8 +212,7 @@ export async function POST(request) {
       const outFileName = `final_edit_${new Date()
         .toISOString()
         .replace(/:/g, "_")}.mp4`;
-      const localOutFile = path.join(process.cwd(), "public", outFileName);
-      ensureDir(path.dirname(localOutFile));
+      const localOutFile = path.join("/tmp", outFileName); // Use /tmp for output file too
 
       writer.write({
         status: "processing",
@@ -236,7 +237,7 @@ export async function POST(request) {
         videoUrl: finalBlob.url,
       });
 
-      // Clean up local files
+      // Clean up local files (optional, /tmp gets cleared automatically)
       writer.write({
         status: "processing",
         message: "Cleaning up temporary files...",
@@ -261,3 +262,7 @@ export async function POST(request) {
 
   return response;
 }
+
+// Add runtime configuration
+export const runtime = "nodejs";
+export const maxDuration = 300; // 5 minutes
