@@ -256,6 +256,42 @@ export async function POST(request) {
         message: error.message || "An unknown error occurred.",
       });
     } finally {
+      // Cleanup phase - always runs
+      writer.write({
+        status: "processing",
+        message: "Cleaning up temporary files...",
+      });
+
+      // Delete original uploaded videos from Vercel Blob
+      for (const url of originalVideoUrls) {
+        try {
+          await del(url);
+          console.log("Deleted from Vercel Blob:", url);
+        } catch (error) {
+          console.error("Error deleting from Vercel Blob:", url, error);
+        }
+      }
+
+      // Clean up local temporary files
+      for (const file of tempFiles) {
+        try {
+          await fs.rm(file, { force: true });
+          console.log("Deleted local file:", file);
+        } catch (error) {
+          console.error("Error deleting local file:", file, error);
+        }
+      }
+
+      // Clean up local temporary directories
+      for (const dir of tempDirs) {
+        try {
+          await fs.rm(dir, { recursive: true, force: true });
+          console.log("Deleted local directory:", dir);
+        } catch (error) {
+          console.error("Error deleting local directory:", dir, error);
+        }
+      }
+
       writer.close();
     }
   })();
