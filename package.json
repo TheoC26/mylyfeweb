@@ -9,6 +9,8 @@
   },
   "dependencies": {
     "@ffmpeg-installer/ffmpeg": "^1.1.0",
+    "@ffmpeg/ffmpeg": "^0.12.15",
+    "@ffmpeg/util": "^0.12.2",
     "@ffprobe-installer/ffprobe": "^2.1.2",
     "@google/generative-ai": "^0.22.0",
     "@supabase/supabase-js": "^2.78.0",

@@ -1,6 +1,7 @@
 'use client';
 import { useState, useRef } from 'react';
-import { supabase } from '../lib/supabase-client'; // Import the client-side Supabase client
+import { supabase } from '../lib/supabase-client';
+import { processFilesForUpload } from '../lib/client-video-processor';
 
 export default function Home() {
   const [files, setFiles] = useState([]);
@@ -14,8 +15,8 @@ export default function Home() {
     setFiles(Array.from(e.target.files));
   };
 
-  const processVideos = async (videoPaths) => {
-    setProgress(prev => [...prev, { status: 'processing', message: 'Starting AI video generation...' }]);
+  const processVideosOnServer = async (videoPaths) => {
+    updateProgress({ status: 'processing', message: 'Starting AI video generation...' });
     
     const response = await fetch("/api/process-final", {
       method: "POST",
@@ -46,7 +47,7 @@ export default function Home() {
         const jsonString = line.replace("data: ", "");
         try {
           const data = JSON.parse(jsonString);
-          setProgress((prev) => [...prev, data]);
+          updateProgress(data);
           if (data.status === "done") {
             setFinalVideoUrl(data.videoUrl);
             setIsProcessing(false);
@@ -61,6 +62,10 @@ export default function Home() {
     }
   };
 
+  const updateProgress = (newStatus) => {
+    setProgress(prev => [...prev, newStatus]);
+  }
+
   const handleProcessClick = async () => {
     if (files.length === 0) {
       alert("Please select video files to upload.");
@@ -72,11 +77,19 @@ export default function Home() {
     setFinalVideoUrl(null);
 
     try {
-      setProgress([{ status: 'processing', message: `Uploading ${files.length} files to database...` }]);
+      // 1. Compress and split files on the client
+      const processedFileChunks = await processFilesForUpload({
+        files,
+        sizeLimit: 19 * 1024 * 1024, // Set to 49MB to be safe with Supabase's 50MB limit
+        progressCallback: (message) => updateProgress({ status: 'processing', message }),
+      });
 
-      const uploadPromises = files.map(file => {
-        const fileName = `public/${Date.now()}-${file.name}`;
-        return supabase.storage.from('videos').upload(fileName, file);
+      // 2. Upload all the processed chunks to Supabase
+      updateProgress({ status: 'processing', message: `Uploading ${processedFileChunks.length} video parts to database...` });
+
+      const uploadPromises = processedFileChunks.map(fileChunk => {
+        const fileName = `public/${Date.now()}-${fileChunk.name}`;
+        return supabase.storage.from('videos').upload(fileName, fileChunk);
       });
 
       const uploadResults = await Promise.all(uploadPromises);
@@ -89,20 +102,17 @@ export default function Home() {
         videoPaths.push(result.data.path);
       }
 
-      setProgress(prev => [...prev, { status: 'processing', message: 'Uploads complete! Starting process...' }]);
+      updateProgress({ status: 'processing', message: 'Uploads complete! Starting server process...' });
       
-      // All uploads are successful, now call the processing API
-      await processVideos(videoPaths);
+      // 3. All uploads are successful, now call the server-side processing API
+      await processVideosOnServer(videoPaths);
 
     } catch (error) {
       console.error("Processing error:", error);
-      setProgress((prev) => [
-        ...prev,
-        {
-          status: "error",
-          message: error.message || "An unknown error occurred.",
-        },
-      ]);
+      updateProgress({
+        status: "error",
+        message: error.message || "An unknown error occurred.",
+      });
       setIsProcessing(false);
     }
   };
