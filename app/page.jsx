@@ -1,6 +1,6 @@
 'use client';
-import { upload } from "@vercel/blob/client";
 import { useState, useRef } from 'react';
+import { supabase } from '../lib/supabase-client'; // Import the client-side Supabase client
 
 export default function Home() {
   const [files, setFiles] = useState([]);
@@ -14,57 +14,15 @@ export default function Home() {
     setFiles(Array.from(e.target.files));
   };
 
-  const handleProcessClick = async () => {
-    if (files.length === 0) {
-      alert("Please select video files to upload.");
-      return;
-    }
-
-    setIsProcessing(true);
-    setProgress([]);
-    setFinalVideoUrl(null);
-
-    const blobUrls = [];
-
-    for (const file of files) {
-      try {
-        console.log("Uploading file:", {
-          name: file.name,
-          size: file.size,
-          type: file.type,
-          sizeInMB: (file.size / (1024 * 1024)).toFixed(2),
-        });
-
-        // Use client upload with multipart support
-        const blob = await upload(file.name, file, {
-          access: "public",
-          handleUploadUrl: "/api/upload",
-          multipart: true, // Enable multipart for large files
-        });
-
-        console.log("Upload successful:", blob);
-        blobUrls.push(blob.url);
-      } catch (error) {
-        console.error("Upload error for", file.name, ":", error);
-        setProgress((prev) => [
-          ...prev,
-          {
-            status: "error",
-            message: `Upload failed for ${file.name}: ${error.message}`,
-          },
-        ]);
-        setIsProcessing(false);
-        return;
-      }
-    }
-
-    // Continue with your processing logic...
-    const response = await fetch("/api/process", {
+  const processVideos = async (videoPaths) => {
+    setProgress(prev => [...prev, { status: 'processing', message: 'Starting AI video generation...' }]);
+    
+    const response = await fetch("/api/process-final", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ videoUrls: blobUrls, prompt }),
+      body: JSON.stringify({ videoPaths, prompt }),
     });
 
     if (!response.body) return;
@@ -100,6 +58,52 @@ export default function Home() {
           console.error("Failed to parse progress update:", jsonString);
         }
       }
+    }
+  };
+
+  const handleProcessClick = async () => {
+    if (files.length === 0) {
+      alert("Please select video files to upload.");
+      return;
+    }
+
+    setIsProcessing(true);
+    setProgress([]);
+    setFinalVideoUrl(null);
+
+    try {
+      setProgress([{ status: 'processing', message: `Uploading ${files.length} files to database...` }]);
+
+      const uploadPromises = files.map(file => {
+        const fileName = `public/${Date.now()}-${file.name}`;
+        return supabase.storage.from('videos').upload(fileName, file);
+      });
+
+      const uploadResults = await Promise.all(uploadPromises);
+
+      const videoPaths = [];
+      for (const result of uploadResults) {
+        if (result.error) {
+          throw new Error(`Supabase upload failed: ${result.error.message}`);
+        }
+        videoPaths.push(result.data.path);
+      }
+
+      setProgress(prev => [...prev, { status: 'processing', message: 'Uploads complete! Starting process...' }]);
+      
+      // All uploads are successful, now call the processing API
+      await processVideos(videoPaths);
+
+    } catch (error) {
+      console.error("Processing error:", error);
+      setProgress((prev) => [
+        ...prev,
+        {
+          status: "error",
+          message: error.message || "An unknown error occurred.",
+        },
+      ]);
+      setIsProcessing(false);
     }
   };
 
