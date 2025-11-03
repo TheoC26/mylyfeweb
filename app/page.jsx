@@ -107,7 +107,7 @@ export default function Home() {
     try {
       const processedFileChunks = await processFilesForUpload({
         files,
-        sizeLimit: 49 * 1024 * 1024, // 49MB
+        sizeLimit: 19 * 1024 * 1024, // 19MB to be safe with Gemini's 20MB limit
         progressCallback: (message) => updateProgress({ status: 'processing', message }),
       });
 
