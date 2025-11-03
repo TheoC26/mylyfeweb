@@ -1,5 +1,5 @@
 'use client';
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { supabase } from '../lib/supabase-client';
 import { processFilesForUpload } from '../lib/client-video-processor';
 
@@ -7,9 +7,19 @@ export default function Home() {
   const [files, setFiles] = useState([]);
   const [prompt, setPrompt] = useState('anything that seems fun and makes my life look enjoyable');
   const [progress, setProgress] = useState([]);
-  const [finalVideoUrl, setFinalVideoUrl] = useState(null);
+  const [finalVideoUrl, setFinalVideoUrl] = useState(null); // For the permanent URL / download link
+  const [playerUrl, setPlayerUrl] = useState(null); // For the playable blob URL
   const [isProcessing, setIsProcessing] = useState(false);
   const fileInputRef = useRef(null);
+
+  // Clean up blob URL when component unmounts or when a new video is made
+  useEffect(() => {
+    return () => {
+      if (playerUrl) {
+        URL.revokeObjectURL(playerUrl);
+      }
+    };
+  }, [playerUrl]);
 
   const handleFileChange = (e) => {
     setFiles(Array.from(e.target.files));
@@ -49,7 +59,10 @@ export default function Home() {
           const data = JSON.parse(jsonString);
           updateProgress(data);
           if (data.status === "done") {
+            // When done, we get the permanent Supabase URL
             setFinalVideoUrl(data.videoUrl);
+            // Now, create a playable blob URL to get around COEP
+            loadVideoForPlayer(data.videoUrl);
             setIsProcessing(false);
           }
           if (data.status === "error") {
@@ -59,6 +72,20 @@ export default function Home() {
           console.error("Failed to parse progress update:", jsonString);
         }
       }
+    }
+  };
+
+  // Fetches the video and creates a local blob URL to use in the video player
+  const loadVideoForPlayer = async (videoUrl) => {
+    try {
+      updateProgress({ status: 'processing', message: 'Loading video for preview...' });
+      const response = await fetch(videoUrl);
+      const blob = await response.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      setPlayerUrl(blobUrl);
+    } catch (error) {
+      console.error('Error creating blob URL for player:', error);
+      updateProgress({ status: 'error', message: 'Could not load video preview.' });
     }
   };
 
@@ -75,17 +102,16 @@ export default function Home() {
     setIsProcessing(true);
     setProgress([]);
     setFinalVideoUrl(null);
+    setPlayerUrl(null); // Clear previous video
 
     try {
-      // 1. Compress and split files on the client
       const processedFileChunks = await processFilesForUpload({
         files,
-        sizeLimit: 19 * 1024 * 1024, // Set to 49MB to be safe with Supabase's 50MB limit
+        sizeLimit: 49 * 1024 * 1024, // 49MB
         progressCallback: (message) => updateProgress({ status: 'processing', message }),
       });
 
-      // 2. Upload all the processed chunks to Supabase
-      updateProgress({ status: 'processing', message: `Uploading ${processedFileChunks.length} video parts to database...` });
+      updateProgress({ status: 'processing', message: `Uploading ${processedFileChunks.length} video parts to Supabase...` });
 
       const uploadPromises = processedFileChunks.map(fileChunk => {
         const fileName = `public/${Date.now()}-${fileChunk.name}`;
@@ -104,7 +130,6 @@ export default function Home() {
 
       updateProgress({ status: 'processing', message: 'Uploads complete! Starting server process...' });
       
-      // 3. All uploads are successful, now call the server-side processing API
       await processVideosOnServer(videoPaths);
 
     } catch (error) {
@@ -186,10 +211,15 @@ export default function Home() {
               )}
             </div>
 
-            {finalVideoUrl && (
+            {(playerUrl || finalVideoUrl) && (
               <div className="mt-6">
                 <h2 className="text-xl font-medium mb-4">Your Video is Ready!</h2>
-                <video controls src={finalVideoUrl} className="w-full rounded-2xl"></video>
+                <video
+                  key={playerUrl} // Key helps React replace the element
+                  controls
+                  src={playerUrl || finalVideoUrl}
+                  className="w-full rounded-2xl"
+                ></video>
                 <a 
                   href={finalVideoUrl} 
                   download 
