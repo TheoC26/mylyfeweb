@@ -10,6 +10,7 @@ export default function Home() {
   const [finalVideoUrl, setFinalVideoUrl] = useState(null); // For the permanent URL / download link
   const [playerUrl, setPlayerUrl] = useState(null); // For the playable blob URL
   const [isProcessing, setIsProcessing] = useState(false);
+  const [isFastMode, setIsFastMode] = useState(true); // State for the new toggle
   const fileInputRef = useRef(null);
 
   // Clean up blob URL when component unmounts or when a new video is made
@@ -33,7 +34,7 @@ export default function Home() {
       headers: {
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ videoPaths, prompt }),
+      body: JSON.stringify({ videoPaths, prompt, isFastMode }), // Pass isFastMode to the API
     });
 
     if (!response.body) return;
@@ -59,9 +60,7 @@ export default function Home() {
           const data = JSON.parse(jsonString);
           updateProgress(data);
           if (data.status === "done") {
-            // When done, we get the permanent Supabase URL
             setFinalVideoUrl(data.videoUrl);
-            // Now, create a playable blob URL to get around COEP
             loadVideoForPlayer(data.videoUrl);
             setIsProcessing(false);
           }
@@ -75,7 +74,6 @@ export default function Home() {
     }
   };
 
-  // Fetches the video and creates a local blob URL to use in the video player
   const loadVideoForPlayer = async (videoUrl) => {
     try {
       updateProgress({ status: 'processing', message: 'Loading video for preview...' });
@@ -102,12 +100,12 @@ export default function Home() {
     setIsProcessing(true);
     setProgress([]);
     setFinalVideoUrl(null);
-    setPlayerUrl(null); // Clear previous video
+    setPlayerUrl(null);
 
     try {
       const processedFileChunks = await processFilesForUpload({
         files,
-        sizeLimit: 19 * 1024 * 1024, // 19MB to be safe with Gemini's 20MB limit
+        sizeLimit: 19 * 1024 * 1024,
         progressCallback: (message) => updateProgress({ status: 'processing', message }),
       });
 
@@ -177,8 +175,30 @@ export default function Home() {
               </div>
             </div>
 
+            {/* --- NEW TOGGLE SWITCH --- */}
             <div className="mb-6">
-              <label htmlFor="prompt" className="block text-xl font-medium mb-2">2. Enter a Prompt</label>
+              <label className="block text-xl font-medium mb-2">2. Select Mode</label>
+              <div className="flex items-center justify-center bg-white p-1 rounded-full border border-gray-300">
+                <button
+                  onClick={() => setIsFastMode(true)}
+                  className={`w-1/2 py-2 rounded-full text-sm font-bold transition ${isFastMode ? 'bg-black text-white' : 'bg-white text-black'}`}
+                >
+                  Fast
+                </button>
+                <button
+                  onClick={() => setIsFastMode(false)}
+                  className={`w-1/2 py-2 rounded-full text-sm font-bold transition ${!isFastMode ? 'bg-black text-white' : 'bg-white text-black'}`}
+                >
+                  Legacy
+                </button>
+              </div>
+              <p className="text-center text-xs text-gray-500 mt-2">
+                {isFastMode ? 'Finds the single best clip from each video. (Quicker)' : 'Analyzes every scene in each video. (Slower, more detailed)'}
+              </p>
+            </div>
+
+            <div className="mb-6">
+              <label htmlFor="prompt" className="block text-xl font-medium mb-2">3. Enter a Prompt</label>
               <textarea
                 id="prompt"
                 rows="3"

@@ -23,7 +23,9 @@ function createStream() {
   });
   const writer = {
     write(data) {
-      controller.enqueue(`data: ${JSON.stringify(data)}\n\n`);
+      controller.enqueue(`data: ${JSON.stringify(data)}
+
+`);
     },
     close() {
       controller.close();
@@ -63,7 +65,7 @@ export async function POST(request) {
     let localFinalVideoPath = ''; // Keep track for cleanup
 
     try {
-      const { videoPaths, prompt } = await request.json();
+      const { videoPaths, prompt, isFastMode } = await request.json(); // Read isFastMode from request
       const userPrompt =
         prompt || 'anything that seems fun and makes my life look enjoyable';
 
@@ -89,23 +91,47 @@ export async function POST(request) {
         })
       );
 
-      writer.write({ status: 'processing', message: 'Analyzing videos with AI...' });
+      writer.write({ status: 'processing', message: `Analyzing videos with AI (${isFastMode ? 'Fast' : 'Legacy'} Mode)...` });
       const durations = await Promise.all(savedFiles.map((f) => ffprobeDuration(f)));
       const limit = pLimit(2);
       const analyses = await Promise.all(
         savedFiles.map((file, i) =>
           limit(async () => {
-            const meta = await analyzeVideoWithGemini({ file, userPrompt });
-            meta.durationSec = durations[i];
-            return meta;
+            try {
+              const meta = await analyzeVideoWithGemini({
+                file,
+                userPrompt,
+                isFastMode, // Pass isFastMode to the analysis function
+                progressCallback: (message) => {
+                  writer.write({ status: 'processing', message: `[${path.basename(file)}] ${message}` });
+                },
+              });
+              meta.durationSec = durations[i];
+              return meta;
+            } catch (error) {
+              console.error(`Analysis failed for ${file}, skipping. Error:`, error.message);
+              writer.write({
+                status: 'processing',
+                message: `Skipping a video part due to analysis error: ${error.message}`,
+              });
+              return null; // Return null for failed analyses
+            }
           })
         )
       );
 
+      // Filter out null results from failed analyses
+      const validAnalyses = analyses.filter(Boolean);
+
+      if (validAnalyses.length === 0) {
+        writer.write({ status: 'error', message: 'AI analysis failed for all video parts.' });
+        return writer.close();
+      }
+
       writer.write({ status: 'processing', message: 'Selecting best segments...' });
-      const selection = selectBestSegments({ videos: analyses, userPrompt });
+      const selection = selectBestSegments({ videos: validAnalyses, userPrompt });
       if (selection.chosen.length === 0) {
-        writer.write({ status: 'error', message: 'AI could not select any segments.' });
+        writer.write({ status: 'error', message: 'AI could not select any segments from the available video parts.' });
         return writer.close();
       }
       writer.write({ status: 'processing', message: `Selected ${selection.chosen.length} segments.` });
