@@ -105,7 +105,7 @@ export default function Home() {
     try {
       const processedFileChunks = await processFilesForUpload({
         files,
-        sizeLimit: 19 * 1024 * 1024,
+        sizeLimit: 50 * 1024 * 1024,
         progressCallback: (message) => updateProgress({ status: 'processing', message }),
       });
 
