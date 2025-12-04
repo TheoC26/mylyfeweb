@@ -1,11 +1,9 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
-import { S3Client, GetObjectCommand } from "@aws-sdk/client-s3";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { v4 as uuidv4 } from "uuid";
 
 const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY);
-const s3 = new S3Client({ region: process.env.AWS_REGION });
 const MODEL = "gemini-2.5-flash-lite";
 
 const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
@@ -28,34 +26,17 @@ function createDefaultSegment() {
   };
 }
 
-async function downloadFileFromS3(bucket, key) {
-  const command = new GetObjectCommand({ Bucket: bucket, Key: key });
-  const response = await s3.send(command);
-  
-  const tmpDir = "/tmp/mylyfe-downloads";
-  await fs.mkdir(tmpDir, { recursive: true });
-  const localPath = path.join(tmpDir, path.basename(key));
-
-  const stream = response.Body;
-  const chunks = [];
-  for await (const chunk of stream) {
-    chunks.push(chunk);
-  }
-  const buffer = Buffer.concat(chunks);
-  await fs.writeFile(localPath, buffer);
-  
-  return localPath;
-}
-
+/**
+ * Analyzes a local video file with Gemini, with retry logic.
+ * @param {object} options
+ * @param {string} options.localPath - The local path to the video file.
+ * @param {string} options.userPrompt - The user's prompt for the analysis.
+ * @returns {Promise<object>} The processed segment data or a default segment on failure.
+ */
 export async function analyzeVideoWithGemini(options) {
-  const { s3Bucket, s3Key, userPrompt } = options;
-  let localPath;
+  const { localPath, userPrompt } = options;
 
   try {
-    console.log(`Downloading ${s3Key} from S3...`);
-    localPath = await downloadFileFromS3(s3Bucket, s3Key);
-    console.log(`Downloaded to ${localPath}`);
-
     const videoBase64 = await fs.readFile(localPath, { encoding: "base64" });
 
     if (!videoBase64 || videoBase64.length < 1000) {
@@ -76,10 +57,10 @@ Goal: Find the single best segment, between 2 and 8 seconds long, that matches t
 User intent: "${userPrompt}"
 Rules:
 - Find only the one best clip.
-- The clip should be between 1 and 5 seconds, unless there is someone speaking to the camera in which case you can include their full statement.
+- The clip must be between 2 and 8 seconds.
 - Provide: start_sec, end_sec, description (1–2 short sentences, concrete details), and scores for relevance (0..1: how well it matches user intent), quality (0..1: how high quality the video is), and confidence (0..1: confidence in your analysis).
 - Return compact JSON with a top-level "segments" array containing just ONE segment.
-Example: { "segments": [ { "start_sec": 1.5, "end_sec": 3.2, "description": "...", "scores": { "relevance": 0.9, "quality": 0.8, "confidence": 0.7 } } ] }`;
+Example: { "segments": [ { "start_sec": 12.5, "end_sec": 17.0, "description": "...", "scores": { "relevance": 0.9, "quality": 0.8, "confidence": 0.8 } } ] }`;
 
     const inputs = [
       { text: instructions },
@@ -121,7 +102,7 @@ Example: { "segments": [ { "start_sec": 1.5, "end_sec": 3.2, "description": "...
         console.warn(`Gemini attempt ${attempt} failed: ${error.message}`);
         
         if (error.message && error.message.includes('503') && attempt < maxRetries) {
-          const delayTime = (2 ** attempt) * 1000 + Math.random() * 1000;
+          const delayTime = (2 ** attempt) * 5000 + Math.random() * 1000;
           console.warn(`Gemini API returned 503. Retrying in ${Math.round(delayTime / 1000)}s...`);
           await delay(delayTime);
         } else {
@@ -136,11 +117,5 @@ Example: { "segments": [ { "start_sec": 1.5, "end_sec": 3.2, "description": "...
   } catch (error) {
     console.error(`A critical error occurred in analyzeVideoWithGemini: ${error.message}`);
     return createDefaultSegment();
-  } finally {
-    if (localPath) {
-      console.log(`Cleaning up temporary file: ${localPath}`);
-      await fs.unlink(localPath).catch(err => console.error(`Failed to delete temp file: ${err.message}`));
-    }
   }
 }
-
