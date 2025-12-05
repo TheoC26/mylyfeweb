@@ -119,3 +119,58 @@ Example: { "segments": [ { "start_sec": 12.5, "end_sec": 17.0, "description": ".
     return createDefaultSegment();
   }
 }
+
+/**
+ * Asks Gemini to identify redundant clips to improve variety.
+ * @param {Array<{index: number, description: string}>} clips - A list of clips with their index and description.
+ * @returns {Promise<number[]>} A prioritized list of clip indices to remove.
+ */
+export async function getPruningSuggestions(clips) {
+  if (!clips || clips.length === 0) {
+    return [];
+  }
+
+  const model = genAI.getGenerativeModel({
+    model: MODEL,
+    generationConfig: {
+      temperature: 0.2,
+      responseMimeType: "application/json",
+    },
+  });
+
+  const prompt = `
+You are a video montage editor. I have a list of potential video clips, each with an index and a description.
+Your goal is to identify clips that are visually or thematically redundant to improve the variety of the final video.
+Do not remove clips that are unique. Only target clips that are very similar to others.
+
+Here is the list of clips:
+${JSON.stringify(clips)}
+
+Please return a JSON object with a single key, "remove_indices", which is an array of numbers.
+The numbers should be the indices of the clips you recommend removing.
+Prioritize the most redundant clips first in the array. If there are no redundant clips, return an empty array.
+
+Example response:
+{
+  "remove_indices": [12, 5, 2]
+}`;
+
+  try {
+    console.log('Asking Gemini for pruning suggestions...');
+    const result = await model.generateContent(prompt);
+    const text = result.response.text();
+    const parsed = JSON.parse(text);
+
+    if (parsed && Array.isArray(parsed.remove_indices)) {
+      console.log('Gemini suggested removing clips at indices:', parsed.remove_indices);
+      return parsed.remove_indices;
+    }
+
+    console.warn('Gemini did not return valid pruning suggestions. Raw response:', text);
+    return [];
+  } catch (error) {
+    console.error('Gemini pruning analysis failed:', error);
+    // On failure, we just don't prune anything.
+    return [];
+  }
+}

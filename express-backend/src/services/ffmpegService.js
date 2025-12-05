@@ -10,10 +10,6 @@ import fs from 'node:fs/promises';
 export async function generateThumbnail(inputPath, outputPath) {
   try {
     console.log(`Generating thumbnail for ${inputPath}...`);
-    // -i: input file, -vframes 1: output only one frame
-    // -an: disable audio, -s: size (resolution)
-    // -ss: seek to position (1 second in to avoid black frames)
-    // -y: overwrite output file if it exists
     await execa('ffmpeg', [
       '-i', inputPath,
       '-ss', '00:00:01.000',
@@ -24,7 +20,6 @@ export async function generateThumbnail(inputPath, outputPath) {
     console.log(`Thumbnail saved to ${outputPath}`);
   } catch (error) {
     console.error('FFmpeg thumbnail generation failed:', error.stderr || error.message);
-    // Attempt to delete the potentially corrupt output file
     await fs.unlink(outputPath).catch(() => {});
     throw new Error('Failed to generate video thumbnail.');
   }
@@ -39,10 +34,6 @@ export async function generateThumbnail(inputPath, outputPath) {
 export async function compressVideo(inputPath, outputPath) {
   try {
     console.log(`Compressing video for ${inputPath}...`);
-    // -vf "scale=-1:720": resize video to 720p height, maintaining aspect ratio
-    // -crf 28: Constant Rate Factor for quality/size balance (higher is more compressed)
-    // -preset veryfast: encoding speed vs. compression ratio
-    // -y: overwrite output file if it exists
     await execa('ffmpeg', [
       '-i', inputPath,
       '-vf', 'scale=-2:720',
@@ -53,8 +44,59 @@ export async function compressVideo(inputPath, outputPath) {
     console.log(`Compressed video saved to ${outputPath}`);
   } catch (error) {
     console.error('FFmpeg video compression failed:', error.stderr || error.message);
-    // Attempt to delete the potentially corrupt output file
     await fs.unlink(outputPath).catch(() => {});
     throw new Error('Failed to compress video.');
+  }
+}
+
+/**
+ * Trims a video clip and formats it to 9:16 with a white background.
+ * @param {string} inputPath - Path to the input video file.
+ * @param {string} outputPath - Path to save the output .ts file.
+ * @param {number} startSec - The start time of the clip in seconds.
+ * @param {number} endSec - The end time of the clip in seconds.
+ * @returns {Promise<void>}
+ */
+export async function trimAndFormatClip(inputPath, outputPath, startSec, endSec) {
+  try {
+    const duration = endSec - startSec;
+    console.log(`Trimming and formatting ${inputPath} from ${startSec}s for ${duration}s...`);
+    await execa('ffmpeg', [
+      '-ss', startSec.toString(),
+      '-i', inputPath,
+      '-t', duration.toString(),
+      '-vf', 'scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:-1:-1:color=white',
+      '-c:v', 'libx264',
+      '-c:a', 'aac',
+      '-y', outputPath,
+    ]);
+    console.log(`Formatted clip saved to ${outputPath}`);
+  } catch (error) {
+    console.error(`FFmpeg trim/format failed for ${inputPath}:`, error.stderr || error.message);
+    await fs.unlink(outputPath).catch(() => {});
+    throw new Error('Failed to trim and format clip.');
+  }
+}
+
+/**
+ * Concatenates multiple .ts video files into a single MP4.
+ * @param {string[]} tsFilePaths - An array of paths to the .ts files to concatenate.
+ * @param {string} outputPath - The path for the final output MP4 file.
+ * @returns {Promise<void>}
+ */
+export async function concatenateTsFiles(tsFilePaths, outputPath) {
+  try {
+    console.log(`Concatenating ${tsFilePaths.length} clips...`);
+    const concatString = `concat:${tsFilePaths.join('|')}`;
+    await execa('ffmpeg', [
+      '-i', concatString,
+      '-c', 'copy', // Copies the stream without re-encoding
+      '-y', outputPath,
+    ]);
+    console.log(`Final montage saved to ${outputPath}`);
+  } catch (error) {
+    console.error('FFmpeg concatenation failed:', error.stderr || error.message);
+    await fs.unlink(outputPath).catch(() => {});
+    throw new Error('Failed to concatenate video clips.');
   }
 }

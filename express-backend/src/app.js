@@ -2,6 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import clipRoutes from './routes/clips.js';
 import profileRoutes from './routes/profiles.js';
+import montageRoutes from './routes/montages.js';
 
 const app = express();
 
@@ -12,6 +13,7 @@ app.use(express.json());
 // Routes
 app.use('/api/clips', clipRoutes);
 app.use('/api/profiles', profileRoutes);
+app.use('/api/montages', montageRoutes);
 
 // Health check endpoint
 app.get('/', (req, res) => {

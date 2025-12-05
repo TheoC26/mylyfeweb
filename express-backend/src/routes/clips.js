@@ -1,14 +1,15 @@
 import { Router } from 'express';
-import { uploadClip } from '../controllers/clipsController.js';
+import { uploadClip, deleteClip } from '../controllers/clipsController.js';
 import { protect } from '../middleware/auth.js';
 
 const router = Router();
 
 // POST /api/clips/
 // Protected route for uploading a video clip.
-// Expects a multipart/form-data request with:
-// - A 'video' file field
-// - A 'userPrompt' text field
 router.post('/', protect, uploadClip);
+
+// DELETE /api/clips/:id
+// Protected route for deleting a specific video clip.
+router.delete('/:id', protect, deleteClip);
 
 export default router;

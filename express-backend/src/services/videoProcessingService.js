@@ -6,8 +6,15 @@ import { uploadBufferToS3 } from "./s3Service.js";
 import { S3Client, GetObjectCommand } from "@aws-sdk/client-s3";
 import fs from "node:fs/promises";
 import path from "node:path";
+import sharp from "sharp";
 
 const s3 = new S3Client({ region: process.env.AWS_REGION });
+
+async function getImageDimensions(imagePath) {
+  const { width, height } = await sharp(imagePath).metadata();
+  if (!width || !height) throw new Error("No image dimensions");
+  return { width, height };
+}
 
 async function downloadFileFromS3(bucket, key, downloadPath) {
   console.log(`Downloading ${key} from S3 to ${downloadPath}...`);
@@ -34,6 +41,7 @@ export async function processVideoInBackground(jobData) {
   const originalPath = path.join(tempDir, `${uniqueId}_original.mp4`);
   const thumbnailPath = path.join(tempDir, `${uniqueId}_thumb.jpg`);
   const compressedPath = path.join(tempDir, `${uniqueId}_compressed.mp4`);
+  const weekEndDate = getUpcomingSunday();
 
   const tempFiles = [originalPath, thumbnailPath, compressedPath];
 
@@ -51,7 +59,9 @@ export async function processVideoInBackground(jobData) {
     ]);
 
     // 3. Upload thumbnail to S3
-    const thumbnailKey = `thumbnails/${userId}/${uniqueId}.jpg`;
+    const thumbnailKey = `clips/thumbnails/${userId}/${
+      weekEndDate.toISOString().split("T")[0]
+    }/${uniqueId}.jpg`;
     const thumbnailUploadPromise = fs
       .readFile(thumbnailPath)
       .then((buffer) => uploadBufferToS3(buffer, thumbnailKey, "image/jpeg"));
@@ -70,8 +80,9 @@ export async function processVideoInBackground(jobData) {
 
     console.log(`Thumbnail uploaded to ${thumbnailUrl}`);
 
+    const { width, height } = await getImageDimensions(thumbnailPath);
+
     // 6. Prepare data for Supabase
-    const weekEndDate = getUpcomingSunday();
     const clipData = {
       user_id: userId,
       clip_url: clipUrl, // URL of the original, full-quality video
@@ -82,9 +93,14 @@ export async function processVideoInBackground(jobData) {
       relevance: analysisResult.scores.relevance,
       quality: analysisResult.scores.quality,
       confidence: analysisResult.scores.confidence,
-      score: analysisResult.scores.relevance * 0.7 + analysisResult.scores.quality * 0.2 + analysisResult.scores.confidence * 0.1,
+      score:
+        analysisResult.scores.relevance * 0.7 +
+        analysisResult.scores.quality * 0.2 +
+        analysisResult.scores.confidence * 0.1,
       date_uploaded: new Date(),
       week_end_date: weekEndDate,
+      width: width,
+      height: height,
     };
 
     // 7. Insert into Supabase
@@ -104,7 +120,6 @@ export async function processVideoInBackground(jobData) {
         p_row_id: userId,
       }
     );
-
 
     if (userError) {
       console.error(
