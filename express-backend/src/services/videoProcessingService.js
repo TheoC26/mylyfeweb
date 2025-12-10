@@ -1,8 +1,13 @@
 import { supabase } from "./supabaseService.js";
 import { getUpcomingSunday } from "../utils/date.js";
 import { analyzeVideoWithGemini } from "./geminiService.js";
-import { generateThumbnail, compressVideo } from "./ffmpegService.js";
+import {
+  generateThumbnail,
+  compressVideo,
+  getVideoDuration, // <--- Added import
+} from "./ffmpegService.js";
 import { uploadBufferToS3 } from "./s3Service.js";
+import { updateJob } from "./jobStatusService.js";
 import { S3Client, GetObjectCommand } from "@aws-sdk/client-s3";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -32,7 +37,7 @@ async function downloadFileFromS3(bucket, key, downloadPath) {
 }
 
 export async function processVideoInBackground(jobData) {
-  const { file, user, userPrompt } = jobData;
+  const { file, user, userPrompt, date, jobId } = jobData;
   const { key: s3Key, bucket: s3Bucket, location: clipUrl } = file;
   const userId = user.id;
 
@@ -49,8 +54,18 @@ export async function processVideoInBackground(jobData) {
     console.log(`Starting background processing for ${s3Key}`);
     await fs.mkdir(tempDir, { recursive: true });
 
+    if (jobId) {
+      await updateJob(jobId, { status: "processing" });
+    }
+
     // 1. Download original video from S3
     await downloadFileFromS3(s3Bucket, s3Key, originalPath);
+
+    // --- NEW: Get Duration immediately after download ---
+    // We check the original file to be safe, though the compressed one would likely have the same duration.
+    const videoDuration = await getVideoDuration(originalPath);
+    console.log(`Video duration detected: ${videoDuration} seconds`);
+    // ----------------------------------------------------
 
     // 2. Generate thumbnail and compress video (can run in parallel)
     await Promise.all([
@@ -70,6 +85,7 @@ export async function processVideoInBackground(jobData) {
     const analysisPromise = analyzeVideoWithGemini({
       localPath: compressedPath,
       userPrompt,
+      videoDuration, // <--- Passing the duration here
     });
 
     // 5. Wait for analysis and thumbnail upload to complete
@@ -97,7 +113,7 @@ export async function processVideoInBackground(jobData) {
         analysisResult.scores.relevance * 0.7 +
         analysisResult.scores.quality * 0.2 +
         analysisResult.scores.confidence * 0.1,
-      date_uploaded: new Date(),
+      clip_date: new Date(date),
       week_end_date: weekEndDate,
       width: width,
       height: height,
@@ -105,11 +121,18 @@ export async function processVideoInBackground(jobData) {
 
     // 7. Insert into Supabase
     console.log("Inserting clip data into Supabase...");
-    const { error } = await supabase.from("clips").insert([clipData]);
+    const { data: insertedClips, error } = await supabase
+      .from("clips")
+      .insert([clipData])
+      .select()
+      .limit(1);
 
     if (error) {
       throw new Error(`Supabase insert failed: ${error.message}`);
     }
+
+    const clipRecord =
+      insertedClips && insertedClips[0] ? insertedClips[0] : null;
 
     console.log(`Successfully processed and saved clip ${s3Key}`);
 
@@ -128,8 +151,27 @@ export async function processVideoInBackground(jobData) {
     } else {
       console.log(`User ${userId} profile updated successfully.`);
     }
+
+    if (jobId) {
+      let clipPayload = null;
+      if (clipRecord) {
+        const { user_id: _userId, ...rest } = clipRecord;
+        clipPayload = rest;
+      }
+      await updateJob(jobId, {
+        status: "completed",
+        clipId: clipRecord ? clipRecord.id : null,
+        clip: clipPayload,
+      });
+    }
   } catch (error) {
     console.error(`[FAIL] Background processing for ${s3Key} failed:`, error);
+    if (jobId) {
+      await updateJob(jobId, {
+        status: "failed",
+        error: error.message || "Processing failed",
+      });
+    }
     // Optional: Here you could update a status in your DB to reflect the failure.
   } finally {
     // 8. Clean up all temporary files

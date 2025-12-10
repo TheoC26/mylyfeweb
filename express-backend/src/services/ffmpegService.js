@@ -2,6 +2,35 @@ import { execa } from "execa";
 import fs from "node:fs/promises";
 import path from "node:path";
 
+
+/**
+ * Gets the duration of a video file in seconds using ffprobe.
+ * @param {string} inputPath
+ * @returns {Promise<number>} Duration in seconds (or 0 if failed)
+ */
+export async function getVideoDuration(inputPath) {
+  try {
+    const { stdout } = await execa("ffprobe", [
+      "-v",
+      "error",
+      "-show_entries",
+      "format=duration",
+      "-of",
+      "default=noprint_wrappers=1:nokey=1",
+      inputPath,
+    ]);
+
+    const duration = parseFloat(stdout);
+    return isNaN(duration) ? 0 : duration;
+  } catch (error) {
+    console.error(
+      `Failed to get video duration for ${inputPath}:`,
+      error.stderr || error.message,
+    );
+    return 0; // Return 0 so the fallback logic in your main code defaults to 3s
+  }
+}
+
 /**
  * Generates a thumbnail from the first frame of a video.
  * @param {string} inputPath
@@ -14,7 +43,7 @@ export async function generateThumbnail(inputPath, outputPath) {
       "-i",
       inputPath,
       "-ss",
-      "00:00:01.000",
+      "00:00:00.200",
       "-vframes",
       "1",
       "-f",

@@ -6,17 +6,24 @@ import { v4 as uuidv4 } from "uuid";
 const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY);
 const MODEL = "gemini-2.5-flash-lite";
 
-const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
  * Creates a default segment object to be used when analysis fails.
+ * Now accepts a duration to calculate the endSec.
+ * @param {number} [duration=3] - The total duration of the video in seconds.
  */
-function createDefaultSegment() {
+function createDefaultSegment(duration) {
   console.log("Returning default segment due to analysis failure.");
+
+  // If duration is missing, default to 3 so the min() logic works safely
+  const safeDuration = typeof duration === "number" ? duration : .5;
+
   return {
     id: uuidv4(),
     startSec: 0,
-    endSec: 0.5,
+    // Logic: The minimum of the clip length OR 3 seconds
+    endSec: Math.min(safeDuration, 3),
     description: "Video analysis failed.",
     scores: {
       relevance: 0.5,
@@ -31,16 +38,22 @@ function createDefaultSegment() {
  * @param {object} options
  * @param {string} options.localPath - The local path to the video file.
  * @param {string} options.userPrompt - The user's prompt for the analysis.
+ * @param {number} [options.videoDuration] - (Optional) The duration of the video in seconds.
  * @returns {Promise<object>} The processed segment data or a default segment on failure.
  */
 export async function analyzeVideoWithGemini(options) {
-  const { localPath, userPrompt } = options;
+  // 1. Destructure videoDuration from options
+  const { localPath, userPrompt, videoDuration } = options;
 
   try {
     const videoBase64 = await fs.readFile(localPath, { encoding: "base64" });
 
     if (!videoBase64 || videoBase64.length < 1000) {
-      throw new Error(`Failed to read video file or file is corrupt/empty: ${path.basename(localPath)}`);
+      throw new Error(
+        `Failed to read video file or file is corrupt/empty: ${path.basename(
+          localPath
+        )}`
+      );
     }
 
     const model = genAI.getGenerativeModel({
@@ -57,10 +70,10 @@ Goal: Find the single best segment, between 2 and 8 seconds long, that matches t
 User intent: "${userPrompt}"
 Rules:
 - Find only the one best clip.
-- The clip must be between 2 and 8 seconds.
+- - The clip should be between 2 and 6 seconds, unless there is someone speaking to the camera in which case you can include their full statement.
 - Provide: start_sec, end_sec, description (1–2 short sentences, concrete details), and scores for relevance (0..1: how well it matches user intent), quality (0..1: how high quality the video is), and confidence (0..1: confidence in your analysis).
 - Return compact JSON with a top-level "segments" array containing just ONE segment.
-Example: { "segments": [ { "start_sec": 12.5, "end_sec": 17.0, "description": "...", "scores": { "relevance": 0.9, "quality": 0.8, "confidence": 0.8 } } ] }`;
+Example: { "segments": [ { "start_sec": 1.5, "end_sec": 5.2, "description": "...", "scores": { "relevance": 0.9, "quality": 0.8, "confidence": 0.7 } } ] }`;
 
     const inputs = [
       { text: instructions },
@@ -78,8 +91,14 @@ Example: { "segments": [ { "start_sec": 12.5, "end_sec": 17.0, "description": ".
         const text = result.response.text();
         const parsed = JSON.parse(text);
 
-        if (!parsed?.segments || !Array.isArray(parsed.segments) || parsed.segments.length === 0) {
-          throw new Error(`Invalid response structure or no segments found. Got: ${text}`);
+        if (
+          !parsed?.segments ||
+          !Array.isArray(parsed.segments) ||
+          parsed.segments.length === 0
+        ) {
+          throw new Error(
+            `Invalid response structure or no segments found. Got: ${text}`
+          );
         }
 
         const segment = parsed.segments[0];
@@ -89,34 +108,55 @@ Example: { "segments": [ { "start_sec": 12.5, "end_sec": 17.0, "description": ".
           endSec: Math.max(segment.end_sec, segment.start_sec + 0.5),
           description: segment.description || "No description",
           scores: {
-            relevance: typeof segment.scores?.relevance === "number" ? segment.scores.relevance : 0,
-            quality: typeof segment.scores?.quality === "number" ? segment.scores.quality : 0.5,
-            confidence: typeof segment.scores?.confidence === "number" ? segment.scores.confidence : 0.5,
+            relevance:
+              typeof segment.scores?.relevance === "number"
+                ? segment.scores.relevance
+                : 0,
+            quality:
+              typeof segment.scores?.quality === "number"
+                ? segment.scores.quality
+                : 0.5,
+            confidence:
+              typeof segment.scores?.confidence === "number"
+                ? segment.scores.confidence
+                : 0.5,
           },
         };
 
         console.log("Successfully analyzed video.");
         return processedSegment;
-
       } catch (error) {
         console.warn(`Gemini attempt ${attempt} failed: ${error.message}`);
-        
-        if (error.message && error.message.includes('503') && attempt < maxRetries) {
-          const delayTime = (2 ** attempt) * 5000 + Math.random() * 1000;
-          console.warn(`Gemini API returned 503. Retrying in ${Math.round(delayTime / 1000)}s...`);
+
+        if (
+          error.message &&
+          error.message.includes("503") &&
+          attempt < maxRetries
+        ) {
+          const delayTime = 2 ** attempt * 5000 + Math.random() * 1000;
+          console.warn(
+            `Gemini API returned 503. Retrying in ${Math.round(
+              delayTime / 1000
+            )}s...`
+          );
           await delay(delayTime);
         } else {
-          console.error("Gemini analysis is not retriable or has failed all retries.");
+          console.error(
+            "Gemini analysis is not retriable or has failed all retries."
+          );
           break;
         }
       }
     }
 
-    return createDefaultSegment();
-
+    // 2. Pass videoDuration to the fallback function
+    return createDefaultSegment(videoDuration);
   } catch (error) {
-    console.error(`A critical error occurred in analyzeVideoWithGemini: ${error.message}`);
-    return createDefaultSegment();
+    console.error(
+      `A critical error occurred in analyzeVideoWithGemini: ${error.message}`
+    );
+    // 3. Pass videoDuration to the fallback function here as well
+    return createDefaultSegment(videoDuration);
   }
 }
 
@@ -156,20 +196,26 @@ Example response:
 }`;
 
   try {
-    console.log('Asking Gemini for pruning suggestions...');
+    console.log("Asking Gemini for pruning suggestions...");
     const result = await model.generateContent(prompt);
     const text = result.response.text();
     const parsed = JSON.parse(text);
 
     if (parsed && Array.isArray(parsed.remove_indices)) {
-      console.log('Gemini suggested removing clips at indices:', parsed.remove_indices);
+      console.log(
+        "Gemini suggested removing clips at indices:",
+        parsed.remove_indices
+      );
       return parsed.remove_indices;
     }
 
-    console.warn('Gemini did not return valid pruning suggestions. Raw response:', text);
+    console.warn(
+      "Gemini did not return valid pruning suggestions. Raw response:",
+      text
+    );
     return [];
   } catch (error) {
-    console.error('Gemini pruning analysis failed:', error);
+    console.error("Gemini pruning analysis failed:", error);
     // On failure, we just don't prune anything.
     return [];
   }

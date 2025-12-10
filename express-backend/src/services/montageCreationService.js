@@ -163,9 +163,7 @@ export async function processMontageCreation({ user }) {
     let selectedClips = Object.values(clipsById);
 
     // 4. Final Sort
-    selectedClips.sort(
-      (a, b) => new Date(a.date_uploaded) - new Date(b.date_uploaded)
-    );
+    selectedClips.sort((a, b) => new Date(a.clip_date) - new Date(b.clip_date));
     console.log(
       `[Montage] Final selection: ${
         selectedClips.length
@@ -237,10 +235,28 @@ export async function processMontageCreation({ user }) {
       })
       .eq("id", montageId);
 
-    if (updateError)
+    if (updateError) {
       throw new Error(
         `Failed to update montage record: ${updateError.message}`
       );
+    }
+
+    // 10. UPDATE USER PROFILE: reset week_vids_count
+    const { error: profileError } = await supabase
+      .from("profiles")
+      .update({ week_vids_count: 0 })
+      .eq("id", userId);
+
+    if (profileError) {
+      console.error(
+        `Failed to reset week_vids_count for user ${userId}: ${profileError.message}`
+      );
+    } else {
+      console.log(
+        `[Montage] Reset week_vids_count for user ${userId} to 0.`
+      );
+    }
+
 
     console.log(`[Montage] Process complete for user ${userId}.`);
   } catch (error) {
